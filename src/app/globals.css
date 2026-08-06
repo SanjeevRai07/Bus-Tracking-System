@@ -1,0 +1,18 @@
+@import "tailwindcss";
+
+:root{
+  --aju-blue:#005BAC;
+  --aju-gold:#FDB913;
+  --background:#ffffff;
+  --foreground:#111827;
+}
+
+.dark{
+  --background:#0F172A;
+  --foreground:#ffffff;
+}
+
+body{
+  background:var(--background);
+  color:var(--foreground);
+}
