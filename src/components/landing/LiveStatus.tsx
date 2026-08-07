@@ -3,6 +3,7 @@
 import { Bus, Clock3, MapPin } from "lucide-react";
 import { motion } from "framer-motion";
 
+
 const buses = [
   {
     bus: "AJU-01",
