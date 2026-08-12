@@ -19,11 +19,12 @@ export default function BusList() {
   async function fetchBuses() {
     const { data, error } = await supabase
       .from("buses")
-      .select("*")
+      .select("id, bus_number, driver_name, route, status")
       .order("bus_number", { ascending: true });
 
     if (error) {
-      console.error(error);
+      console.error("Bus fetch error:", error.message);
+      setLoading(false);
       return;
     }
 
@@ -35,7 +36,7 @@ export default function BusList() {
     fetchBuses();
 
     const channel = supabase
-      .channel("bus-channel")
+      .channel("bus-list")
       .on(
         "postgres_changes",
         {
@@ -56,39 +57,46 @@ export default function BusList() {
 
   if (loading) {
     return (
-      <div className="mt-10 rounded-xl bg-white p-6 shadow">
-        Loading...
+      <div className="mt-10 rounded-2xl bg-white p-6 shadow-lg">
+        <p className="text-gray-500">Loading buses...</p>
       </div>
     );
   }
 
   return (
-    <div className="mt-10 rounded-xl bg-white p-6 shadow">
+    <div className="mt-10 rounded-2xl bg-white p-6 shadow-lg">
       <h2 className="mb-6 text-2xl font-bold text-[#005BAC]">
-        Running Buses
+        University Buses
       </h2>
 
       {buses.length === 0 ? (
-        <p>No buses found.</p>
+        <p className="text-gray-500">No buses found.</p>
       ) : (
         <div className="space-y-4">
           {buses.map((bus) => (
             <div
               key={bus.id}
-              className="flex items-center justify-between rounded-lg border p-4"
+              className="flex items-center justify-between rounded-xl border p-4"
             >
               <div className="flex items-center gap-4">
                 <div className="rounded-full bg-blue-100 p-3">
-                  <BusFront className="text-[#005BAC]" />
+                  <BusFront
+                    size={24}
+                    className="text-[#005BAC]"
+                  />
                 </div>
 
                 <div>
-                  <h3 className="font-bold">{bus.bus_number}</h3>
+                  <h3 className="text-lg font-bold">
+                    {bus.bus_number}
+                  </h3>
+
                   <p className="text-sm text-gray-500">
-                    {bus.driver_name || "No Driver"}
+                    Driver: {bus.driver_name || "Not Assigned"}
                   </p>
+
                   <p className="text-sm text-gray-500">
-                    {bus.route || "No Route"}
+                    Route: {bus.route || "Not Assigned"}
                   </p>
                 </div>
               </div>

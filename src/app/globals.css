@@ -1,18 +1,79 @@
 @import "tailwindcss";
 
-:root{
-  --aju-blue:#005BAC;
-  --aju-gold:#FDB913;
-  --background:#ffffff;
-  --foreground:#111827;
+:root {
+  --aju-blue: #005BAC;
+  --aju-gold: #FDB913;
+  --background: #ffffff;
+  --foreground: #111827;
 }
 
-.dark{
-  --background:#0F172A;
-  --foreground:#ffffff;
+.dark {
+  --background: #0F172A;
+  --foreground: #ffffff;
 }
 
-body{
-  background:var(--background);
-  color:var(--foreground);
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* Leaflet Map */
+.leaflet-container {
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+}
+
+.leaflet-control-container {
+  z-index: 10;
+}
+html,
+body {
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden;
+}
+/* Student Live Map */
+
+.leaflet-container {
+  font-family: inherit;
+}
+
+.custom-bus-marker {
+  background: transparent !important;
+  border: none !important;
+}
+
+.leaflet-popup-content-wrapper {
+  border-radius: 16px !important;
+  padding: 4px !important;
+}
+
+.leaflet-popup-content {
+  margin: 12px !important;
+}
+
+.leaflet-popup-tip {
+  background: white !important;
+}
+
+.leaflet-control-zoom {
+  border: none !important;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.15) !important;
+}
+
+.leaflet-control-zoom a {
+  color: #005bac !important;
+  font-weight: 700 !important;
 }

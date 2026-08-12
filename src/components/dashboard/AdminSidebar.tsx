@@ -45,12 +45,22 @@ const links = [
 
 export default function AdminSidebar() {
   return (
-    <aside className="w-64 min-h-screen bg-[#005BAC] text-white p-6">
-      <h2 className="text-2xl font-bold mb-8">
-        AJU Admin
-      </h2>
+    <aside className="fixed left-0 top-0 z-50 flex h-screen w-[334px] flex-col overflow-y-auto bg-[#005BAC] px-6 py-8 text-white">
 
-      <nav className="space-y-4">
+      {/* LOGO */}
+      <div className="mb-10">
+        <h1 className="text-3xl font-bold">
+          AJU Admin
+        </h1>
+
+        <p className="mt-2 text-blue-100">
+          Smart Bus Management
+        </p>
+      </div>
+
+      {/* NAVIGATION */}
+      <nav className="flex flex-col gap-3">
+
         {links.map((link) => {
           const Icon = link.icon;
 
@@ -58,14 +68,31 @@ export default function AdminSidebar() {
             <Link
               key={link.name}
               href={link.href}
-              className="flex items-center gap-3 rounded-lg px-3 py-2 transition hover:bg-blue-700"
+              className="flex min-h-[58px] items-center gap-5 rounded-xl px-5 text-lg font-semibold transition hover:bg-blue-700"
             >
-              <Icon size={20} />
-              {link.name}
+              <Icon size={26} />
+              <span>{link.name}</span>
             </Link>
           );
         })}
+
       </nav>
+
+      {/* BOTTOM BRAND */}
+      <div className="mt-auto pt-8">
+
+        <div className="rounded-2xl bg-blue-700 p-5">
+          <h2 className="text-xl font-bold">
+            AJU Smart Bus
+          </h2>
+
+          <p className="mt-2 text-blue-100">
+            Admin Panel
+          </p>
+        </div>
+
+      </div>
+
     </aside>
   );
 }
