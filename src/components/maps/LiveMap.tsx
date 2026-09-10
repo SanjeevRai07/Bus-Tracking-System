@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type CSSProperties } from "react";
 import {
   importLibrary,
   setOptions,
@@ -8,291 +8,203 @@ import {
 
 export type LiveMapBus = {
   id: string;
-  busNumber: string;
+
+  // Supports both current dashboard formats.
+  bus_number?: string;
+  busNumber?: string;
+
   latitude: number;
   longitude: number;
+
   driverName?: string | null;
   routeName?: string | null;
+
+  // Supports both naming styles.
+  updated_at?: string;
   updatedAt?: string | null;
 };
 
-interface LiveMapProps {
-  buses: LiveMapBus[];
-  followBusId?: string | null;
-  heightClassName?: string;
-}
+type LiveMapProps = {
+  buses?: LiveMapBus[];
 
-type MarkerRecord = {
-  marker: any;
-  position: {
-    lat: number;
-    lng: number;
-  };
-  animationFrame: number | null;
+  followBusId?: string | null;
+
+  heightClassName?: string;
 };
+
+type MapInstance = any;
+type MarkerInstance = any;
+type InfoWindowInstance = any;
 
 const DEFAULT_CENTER = {
   lat: 22.8046,
   lng: 86.2029,
 };
 
-function clamp(
-  value: number,
-  min: number,
-  max: number
-) {
-  return Math.min(Math.max(value, min), max);
-}
-
-function smoothStep(value: number) {
-  const t = clamp(value, 0, 1);
-  return t * t * (3 - 2 * t);
-}
-
-function createBusMarkerElement(
-  busNumber: string
-) {
-  const wrapper = document.createElement("div");
-
-  wrapper.style.width = "70px";
-  wrapper.style.height = "80px";
-  wrapper.style.position = "relative";
-  wrapper.style.display = "flex";
-  wrapper.style.alignItems = "center";
-  wrapper.style.justifyContent = "center";
-  wrapper.style.cursor = "pointer";
-
-  const label = document.createElement("div");
-
-  label.style.position = "absolute";
-  label.style.top = "0";
-  label.style.left = "50%";
-  label.style.transform = "translateX(-50%)";
-  label.style.padding = "4px 10px";
-  label.style.borderRadius = "999px";
-  label.style.background = "#ffffff";
-  label.style.color = "#0f172a";
-  label.style.fontSize = "11px";
-  label.style.fontWeight = "800";
-  label.style.whiteSpace = "nowrap";
-  label.style.boxShadow =
-    "0 3px 10px rgba(0,0,0,0.16)";
-  label.style.border =
-    "1px solid rgba(148,163,184,0.25)";
-  label.textContent = busNumber;
-
-  const circle = document.createElement("div");
-
-  circle.style.position = "absolute";
-  circle.style.top = "19px";
-  circle.style.left = "50%";
-  circle.style.transform =
-    "translateX(-50%)";
-  circle.style.width = "58px";
-  circle.style.height = "58px";
-  circle.style.borderRadius = "50%";
-  circle.style.background =
-    "linear-gradient(135deg,#0088e8 0%,#005bac 100%)";
-  circle.style.border = "4px solid white";
-  circle.style.boxShadow =
-    "0 9px 25px rgba(0,0,0,0.28),0 3px 8px rgba(0,0,0,0.18)";
-  circle.style.display = "flex";
-  circle.style.alignItems = "center";
-  circle.style.justifyContent = "center";
-  circle.style.fontSize = "28px";
-  circle.style.transition =
-    "transform 180ms ease,box-shadow 180ms ease";
-
-  circle.textContent = "🚌";
-
-  const pointer = document.createElement("div");
-
-  pointer.style.position = "absolute";
-  pointer.style.left = "50%";
-  pointer.style.bottom = "0";
-  pointer.style.transform =
-    "translateX(-50%)";
-  pointer.style.width = "0";
-  pointer.style.height = "0";
-  pointer.style.borderLeft =
-    "9px solid transparent";
-  pointer.style.borderRight =
-    "9px solid transparent";
-  pointer.style.borderTop =
-    "15px solid #005bac";
-
-  wrapper.appendChild(label);
-  wrapper.appendChild(circle);
-  wrapper.appendChild(pointer);
-
-  wrapper.addEventListener(
-    "mouseenter",
-    () => {
-      circle.style.transform =
-        "translateX(-50%) scale(1.08)";
-
-      circle.style.boxShadow =
-        "0 12px 30px rgba(0,0,0,0.34),0 4px 10px rgba(0,0,0,0.22)";
-    }
-  );
-
-  wrapper.addEventListener(
-    "mouseleave",
-    () => {
-      circle.style.transform =
-        "translateX(-50%) scale(1)";
-
-      circle.style.boxShadow =
-        "0 9px 25px rgba(0,0,0,0.28),0 3px 8px rgba(0,0,0,0.18)";
-    }
-  );
-
-  return wrapper;
-}
+let mapsLoaderConfigured = false;
 
 export default function LiveMap({
-  buses,
+  buses = [],
   followBusId = null,
   heightClassName = "h-[620px]",
 }: LiveMapProps) {
-  const mapElementRef =
+  const mapContainerRef =
     useRef<HTMLDivElement | null>(null);
 
-  const mapRef = useRef<any>(null);
+  const mapRef =
+    useRef<MapInstance>(null);
 
-  const infoWindowRef =
+  const markerClassRef =
+    useRef<any>(null);
+
+  const infoWindowClassRef =
     useRef<any>(null);
 
   const markersRef =
-    useRef<Map<string, MarkerRecord>>(
-      new Map()
-    );
+    useRef<Record<string, MarkerInstance>>({});
+
+  const infoWindowsRef =
+    useRef<Record<string, InfoWindowInstance>>({});
+
+  const lastPositionsRef =
+    useRef<
+      Record<
+        string,
+        {
+          lat: number;
+          lng: number;
+        }
+      >
+    >({});
+
+  const animationFramesRef =
+    useRef<Record<string, number>>({});
+
+  const centeredRef =
+    useRef(false);
 
   const initializedRef =
     useRef(false);
 
-  /*
-   * ============================================================
-   * INITIALIZE GOOGLE MAP
-   * ============================================================
-   */
+  // ============================================================
+  // GOOGLE MAP INITIALIZATION
+  // ============================================================
 
   useEffect(() => {
     let cancelled = false;
 
     async function initializeMap() {
       if (
-        !mapElementRef.current ||
-        initializedRef.current
+        initializedRef.current ||
+        !mapContainerRef.current
       ) {
         return;
       }
 
-      const apiKey =
-        process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY?.trim();
-
-      if (!apiKey) {
-        console.error(
-          "NEXT_PUBLIC_GOOGLE_MAPS_API_KEY is missing."
-        );
-
-        return;
-      }
-
       try {
-        /*
-         * Configure Google Maps loader.
-         */
-        setOptions({
-          key: apiKey,
-          v: "weekly",
-        });
+        const apiKey =
+          process.env
+            .NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
 
-        /*
-         * Load the Maps library.
-         */
-        const mapsLibrary =
-          await importLibrary("maps");
-
-        /*
-         * Load marker library.
-         */
-        await importLibrary("marker");
-
-        if (
-          cancelled ||
-          !mapElementRef.current
-        ) {
+        if (!apiKey) {
+          console.error(
+            "Google Maps API key is missing."
+          );
           return;
         }
 
         /*
-         * Get required classes from Maps library.
+         * @googlemaps/js-api-loader warns when setOptions()
+         * is called more than once.
+         *
+         * This guard prevents repeated configuration.
          */
-        const MapClass =
-          mapsLibrary.Map;
-
-        const InfoWindowClass =
-          mapsLibrary.InfoWindow;
-
-        /*
-         * Create map.
-         */
-        const map = new MapClass(
-          mapElementRef.current,
-          {
-            center: DEFAULT_CENTER,
-
-            zoom: 14,
-
-            mapTypeId: "roadmap",
-
-            /*
-             * Google Maps map type selector:
-             *
-             * NORMAL
-             * SATELLITE
-             * HYBRID
-             * TERRAIN
-             */
-            mapTypeControl: true,
-
-            mapTypeControlOptions: {
-              style: 0,
-
-              mapTypeIds: [
-                "roadmap",
-                "satellite",
-                "hybrid",
-                "terrain",
-              ],
-            },
-
-            zoomControl: true,
-
-            fullscreenControl: true,
-
-            streetViewControl: true,
-
-            gestureHandling: "greedy",
-
-            clickableIcons: true,
-
-            /*
-             * Required for AdvancedMarkerElement.
-             */
-            mapId: "DEMO_MAP_ID",
-          }
-        );
-
-        mapRef.current = map;
-
-        infoWindowRef.current =
-          new InfoWindowClass({
-            maxWidth: 320,
+        if (!mapsLoaderConfigured) {
+          setOptions({
+            key: apiKey,
+            v: "weekly",
           });
 
-        initializedRef.current = true;
+          mapsLoaderConfigured = true;
+        }
+
+        const maps =
+          await importLibrary("maps");
+
+        const marker =
+          await importLibrary("marker");
+
+        if (
+          cancelled ||
+          !mapContainerRef.current
+        ) {
+          return;
+        }
+
+        const MapClass =
+          maps.Map;
+
+        const InfoWindowClass =
+          maps.InfoWindow;
+
+        const AdvancedMarkerElement =
+          marker.AdvancedMarkerElement;
+
+        const map =
+          new MapClass(
+            mapContainerRef.current,
+            {
+              center:
+                DEFAULT_CENTER,
+
+              zoom: 14,
+
+              mapId:
+                "DEMO_MAP_ID",
+
+              mapTypeId:
+                "roadmap",
+
+              mapTypeControl:
+                true,
+
+              mapTypeControlOptions: {
+                mapTypeIds: [
+                  "roadmap",
+                  "satellite",
+                  "hybrid",
+                  "terrain",
+                ],
+              },
+
+              zoomControl:
+                true,
+
+              fullscreenControl:
+                true,
+
+              streetViewControl:
+                true,
+
+              gestureHandling:
+                "greedy",
+
+              clickableIcons:
+                true,
+            }
+          );
+
+        mapRef.current =
+          map;
+
+        markerClassRef.current =
+          AdvancedMarkerElement;
+
+        infoWindowClassRef.current =
+          InfoWindowClass;
+
+        initializedRef.current =
+          true;
       } catch (error) {
         console.error(
           "Google Maps initialization error:",
@@ -305,846 +217,852 @@ export default function LiveMap({
 
     return () => {
       cancelled = true;
-    };
-  }, []);
 
-  /*
-   * ============================================================
-   * OPEN BUS INFORMATION
-   * ============================================================
-   */
-
-  const openBusInfo = (
-    bus: LiveMapBus
-  ) => {
-    const map = mapRef.current;
-
-    const infoWindow =
-      infoWindowRef.current;
-
-    if (!map || !infoWindow) {
-      return;
-    }
-
-    const updatedText =
-      bus.updatedAt
-        ? new Date(
-            bus.updatedAt
-          ).toLocaleTimeString([], {
-            hour: "2-digit",
-            minute: "2-digit",
-            second: "2-digit",
-          })
-        : "Just now";
-
-    const driverText =
-      bus.driverName?.trim() ||
-      "Driver not assigned";
-
-    const routeText =
-      bus.routeName?.trim() ||
-      "Route not assigned";
-
-    const content =
-      document.createElement("div");
-
-    content.style.minWidth = "240px";
-
-    content.style.padding = "4px";
-
-    content.innerHTML = `
-      <div
-        style="
-          font-family: Arial, sans-serif;
-          color: #0f172a;
-        "
-      >
-
-        <div
-          style="
-            font-size: 17px;
-            font-weight: 800;
-            margin-bottom: 12px;
-          "
-        >
-          🚌 ${bus.busNumber}
-        </div>
-
-        <div
-          style="
-            font-size: 13px;
-            line-height: 1.8;
-            color: #475569;
-          "
-        >
-
-          <div>
-            <strong style="color:#0f172a;">
-              Driver:
-            </strong>
-
-            ${driverText}
-          </div>
-
-          <div>
-            <strong style="color:#0f172a;">
-              Route:
-            </strong>
-
-            ${routeText}
-          </div>
-
-          <div>
-            <strong style="color:#0f172a;">
-              Latitude:
-            </strong>
-
-            ${bus.latitude.toFixed(6)}
-          </div>
-
-          <div>
-            <strong style="color:#0f172a;">
-              Longitude:
-            </strong>
-
-            ${bus.longitude.toFixed(6)}
-          </div>
-
-          <div>
-            <strong style="color:#0f172a;">
-              Updated:
-            </strong>
-
-            ${updatedText}
-          </div>
-
-        </div>
-
-        <div
-          style="
-            display:inline-flex;
-            align-items:center;
-            gap:6px;
-            margin-top:12px;
-            padding:6px 11px;
-            border-radius:999px;
-            background:#dcfce7;
-            color:#166534;
-            font-size:11px;
-            font-weight:800;
-          "
-        >
-          <span style="font-size:9px;">
-            ●
-          </span>
-
-          LIVE GPS
-        </div>
-
-      </div>
-    `;
-
-    infoWindow.setContent(content);
-
-    infoWindow.setPosition({
-      lat: bus.latitude,
-      lng: bus.longitude,
-    });
-
-    infoWindow.open({
-      map,
-    });
-  };
-
-  /*
-   * ============================================================
-   * CREATE / UPDATE LIVE BUS MARKERS
-   * ============================================================
-   */
-
-  useEffect(() => {
-    const map = mapRef.current;
-
-    if (
-      !map ||
-      !initializedRef.current
-    ) {
-      return;
-    }
-
-    let active = true;
-
-    async function synchronizeMarkers() {
-      try {
-        /*
-         * Load Advanced Marker library.
-         */
-        const markerLibrary =
-          await importLibrary("marker");
-
-        if (!active) {
-          return;
-        }
-
-        const AdvancedMarkerElement =
-          markerLibrary.AdvancedMarkerElement;
-
-        const liveBusIds =
-          new Set(
-            buses.map(
-              (bus) => bus.id
-            )
-          );
-
-        /*
-         * ========================================================
-         * REMOVE BUSES THAT ARE NO LONGER LIVE
-         * ========================================================
-         */
-
-        markersRef.current.forEach(
-          (record, id) => {
-            if (
-              !liveBusIds.has(id)
-            ) {
-              if (
-                record.animationFrame !==
-                null
-              ) {
-                cancelAnimationFrame(
-                  record.animationFrame
-                );
-              }
-
-              record.marker.map =
-                null;
-
-              markersRef.current.delete(
-                id
-              );
-            }
-          }
+      Object.values(
+        animationFramesRef.current
+      ).forEach((frameId) => {
+        cancelAnimationFrame(
+          frameId
         );
+      });
 
-        /*
-         * ========================================================
-         * CREATE / UPDATE EACH BUS
-         * ========================================================
-         */
+      animationFramesRef.current =
+        {};
 
-        for (
-          const bus of buses
-        ) {
-          const latitude =
-            Number(
-              bus.latitude
-            );
+      Object.values(
+        markersRef.current
+      ).forEach((marker) => {
+        marker.map = null;
+      });
 
-          const longitude =
-            Number(
-              bus.longitude
-            );
+      markersRef.current =
+        {};
 
-          if (
-            !Number.isFinite(
-              latitude
-            ) ||
-            !Number.isFinite(
-              longitude
-            )
-          ) {
-            continue;
-          }
+      infoWindowsRef.current =
+        {};
 
-          const newPosition = {
-            lat: latitude,
-            lng: longitude,
-          };
+      lastPositionsRef.current =
+        {};
 
-          const existing =
-            markersRef.current.get(
-              bus.id
-            );
-
-          /*
-           * ======================================================
-           * NEW BUS
-           * ======================================================
-           */
-
-          if (!existing) {
-            const markerElement =
-              createBusMarkerElement(
-                bus.busNumber
-              );
-
-            const marker =
-              new AdvancedMarkerElement(
-                {
-                  map,
-
-                  position:
-                    newPosition,
-
-                  title:
-                    `${bus.busNumber} — Live GPS`,
-
-                  content:
-                    markerElement,
-
-                  gmpClickable: true,
-                }
-              );
-
-            marker.addListener(
-              "click",
-              () => {
-                openBusInfo(bus);
-              }
-            );
-
-            markersRef.current.set(
-              bus.id,
-              {
-                marker,
-
-                position:
-                  newPosition,
-
-                animationFrame:
-                  null,
-              }
-            );
-
-            continue;
-          }
-
-          /*
-           * ======================================================
-           * EXISTING BUS
-           * ======================================================
-           */
-
-          const startPosition =
-            existing.position;
-
-          const endPosition =
-            newPosition;
-
-          const unchanged =
-            startPosition.lat ===
-              endPosition.lat &&
-            startPosition.lng ===
-              endPosition.lng;
-
-          if (unchanged) {
-            existing.marker.position =
-              endPosition;
-
-            existing.position =
-              endPosition;
-
-            continue;
-          }
-
-          /*
-           * Cancel previous animation.
-           */
-          if (
-            existing.animationFrame !==
-            null
-          ) {
-            cancelAnimationFrame(
-              existing.animationFrame
-            );
-
-            existing.animationFrame =
-              null;
-          }
-
-          /*
-           * Smooth movement.
-           */
-          const startTime =
-            performance.now();
-
-          const duration =
-            900;
-
-          const animate = (
-            currentTime: number
-          ) => {
-            const elapsed =
-              currentTime -
-              startTime;
-
-            const rawProgress =
-              elapsed /
-              duration;
-
-            const progress =
-              smoothStep(
-                rawProgress
-              );
-
-            const nextLat =
-              startPosition.lat +
-              (
-                endPosition.lat -
-                startPosition.lat
-              ) *
-                progress;
-
-            const nextLng =
-              startPosition.lng +
-              (
-                endPosition.lng -
-                startPosition.lng
-              ) *
-                progress;
-
-            existing.marker.position =
-              {
-                lat: nextLat,
-                lng: nextLng,
-              };
-
-            if (
-              rawProgress < 1
-            ) {
-              existing.animationFrame =
-                requestAnimationFrame(
-                  animate
-                );
-            } else {
-              existing.animationFrame =
-                null;
-
-              existing.position =
-                endPosition;
-            }
-          };
-
-          existing.animationFrame =
-            requestAnimationFrame(
-              animate
-            );
-        }
-
-        /*
-         * ========================================================
-         * FOLLOW SELECTED BUS
-         * ========================================================
-         */
-
-        if (
-          followBusId
-        ) {
-          const selectedBus =
-            buses.find(
-              (bus) =>
-                bus.id ===
-                followBusId
-            );
-
-          if (selectedBus) {
-            map.panTo({
-              lat:
-                selectedBus.latitude,
-
-              lng:
-                selectedBus.longitude,
-            });
-          }
-        }
-
-        /*
-         * ========================================================
-         * ONE LIVE BUS
-         * ========================================================
-         */
-
-        else if (
-          buses.length === 1
-        ) {
-          const bus =
-            buses[0];
-
-          map.panTo({
-            lat:
-              bus.latitude,
-
-            lng:
-              bus.longitude,
-          });
-        }
-
-        /*
-         * ========================================================
-         * MULTIPLE LIVE BUSES
-         * ========================================================
-         */
-
-        else if (
-          buses.length > 1
-        ) {
-          const firstBus =
-            buses[0];
-
-          const minLat =
-            Math.min(
-              ...buses.map(
-                (bus) =>
-                  Number(
-                    bus.latitude
-                  )
-              )
-            );
-
-          const maxLat =
-            Math.max(
-              ...buses.map(
-                (bus) =>
-                  Number(
-                    bus.latitude
-                  )
-              )
-            );
-
-          const minLng =
-            Math.min(
-              ...buses.map(
-                (bus) =>
-                  Number(
-                    bus.longitude
-                  )
-              )
-            );
-
-          const maxLng =
-            Math.max(
-              ...buses.map(
-                (bus) =>
-                  Number(
-                    bus.longitude
-                  )
-              )
-            );
-
-          /*
-           * Center between all buses.
-           */
-          const centerLat =
-            (minLat + maxLat) /
-            2;
-
-          const centerLng =
-            (minLng + maxLng) /
-            2;
-
-          /*
-           * Keep map centered on
-           * live buses without requiring
-           * additional Google namespace types.
-           */
-          map.setCenter({
-            lat: centerLat,
-            lng: centerLng,
-          });
-
-          /*
-           * Use a slightly wider view
-           * when buses are far apart.
-           */
-          if (
-            Math.abs(
-              maxLat - minLat
-            ) > 0.01 ||
-            Math.abs(
-              maxLng - minLng
-            ) > 0.01
-          ) {
-            map.setZoom(12);
-          } else {
-            map.setZoom(14);
-          }
-
-          /*
-           * Avoid unused-variable warning.
-           */
-          void firstBus;
-        }
-      } catch (error) {
-        console.error(
-          "Live bus marker synchronization error:",
-          error
-        );
-      }
-    }
-
-    synchronizeMarkers();
-
-    return () => {
-      active = false;
-    };
-  }, [
-    buses,
-    followBusId,
-  ]);
-
-  /*
-   * ============================================================
-   * CLEANUP
-   * ============================================================
-   */
-
-  useEffect(() => {
-    return () => {
-      markersRef.current.forEach(
-        (record) => {
-          if (
-            record.animationFrame !==
-            null
-          ) {
-            cancelAnimationFrame(
-              record.animationFrame
-            );
-          }
-
-          record.marker.map =
-            null;
-        }
-      );
-
-      markersRef.current.clear();
-
-      infoWindowRef.current =
+      mapRef.current =
         null;
-
-      mapRef.current = null;
 
       initializedRef.current =
         false;
     };
   }, []);
 
-  /*
-   * ============================================================
-   * LIVE BUS COUNT
-   * ============================================================
-   */
+  // ============================================================
+  // CREATE BUS MARKER
+  // ============================================================
 
-  const liveBusCount =
-    buses.length;
+  function createBusMarkerElement(
+    bus: LiveMapBus
+  ) {
+    const wrapper =
+      document.createElement(
+        "div"
+      );
 
-  return (
-    <div
-      className={`
-        relative
-        w-full
-        overflow-hidden
-        rounded-[28px]
-        border
-        border-slate-200
-        bg-slate-100
-        shadow-inner
-        ${heightClassName}
-      `}
-    >
-      {/* ========================================================
-          GOOGLE MAP
-          ======================================================== */}
+    wrapper.style.position =
+      "relative";
 
+    wrapper.style.width =
+      "68px";
+
+    wrapper.style.height =
+      "72px";
+
+    wrapper.style.cursor =
+      "pointer";
+
+    const pulse =
+      document.createElement(
+        "div"
+      );
+
+    pulse.style.position =
+      "absolute";
+
+    pulse.style.left =
+      "7px";
+
+    pulse.style.top =
+      "7px";
+
+    pulse.style.width =
+      "54px";
+
+    pulse.style.height =
+      "54px";
+
+    pulse.style.borderRadius =
+      "9999px";
+
+    pulse.style.background =
+      "rgba(14,165,233,.20)";
+
+    pulse.style.animation =
+      "ajuLiveBusPulse 1.8s ease-out infinite";
+
+    const circle =
+      document.createElement(
+        "div"
+      );
+
+    circle.style.position =
+      "absolute";
+
+    circle.style.left =
+      "8px";
+
+    circle.style.top =
+      "8px";
+
+    circle.style.width =
+      "52px";
+
+    circle.style.height =
+      "52px";
+
+    circle.style.borderRadius =
+      "50%";
+
+    circle.style.border =
+      "4px solid white";
+
+    circle.style.background =
+      "linear-gradient(135deg,#005BAC,#0EA5E9)";
+
+    circle.style.boxShadow =
+      "0 6px 20px rgba(0,0,0,.30)";
+
+    circle.style.display =
+      "flex";
+
+    circle.style.alignItems =
+      "center";
+
+    circle.style.justifyContent =
+      "center";
+
+    circle.style.fontSize =
+      "25px";
+
+    circle.innerText =
+      "🚌";
+
+    const label =
+      document.createElement(
+        "div"
+      );
+
+    label.style.position =
+      "absolute";
+
+    label.style.top =
+      "62px";
+
+    label.style.left =
+      "50%";
+
+    label.style.transform =
+      "translateX(-50%)";
+
+    label.style.padding =
+      "3px 9px";
+
+    label.style.borderRadius =
+      "9999px";
+
+    label.style.border =
+      "1px solid #dbeafe";
+
+    label.style.background =
+      "white";
+
+    label.style.boxShadow =
+      "0 2px 8px rgba(0,0,0,.15)";
+
+    label.style.color =
+      "#005BAC";
+
+    label.style.fontFamily =
+      "Arial,sans-serif";
+
+    label.style.fontSize =
+      "11px";
+
+    label.style.fontWeight =
+      "800";
+
+    label.style.whiteSpace =
+      "nowrap";
+
+    label.innerText =
+      getBusNumber(bus);
+
+    wrapper.appendChild(
+      pulse
+    );
+
+    wrapper.appendChild(
+      circle
+    );
+
+    wrapper.appendChild(
+      label
+    );
+
+    return wrapper;
+  }
+
+  // ============================================================
+  // INFO WINDOW
+  // ============================================================
+
+  function createInfoContent(
+    bus: LiveMapBus
+  ) {
+    const updatedValue =
+      getUpdatedAt(bus);
+
+    const updated =
+      updatedValue
+        ? new Date(
+            updatedValue
+          ).toLocaleTimeString(
+            [],
+            {
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+            }
+          )
+        : "Unknown";
+
+    return `
       <div
-        ref={mapElementRef}
-        className="
-          absolute
-          inset-0
-        "
-      />
-
-      {/* ========================================================
-          LIVE STATUS CARD
-          BOTTOM LEFT
-          ======================================================== */}
-
-      <div
-        className="
-          absolute
-          left-4
-          bottom-4
-          z-30
-          rounded-2xl
-          border
-          border-white/70
-          bg-white/95
-          px-5
-          py-4
-          shadow-[0_12px_30px_rgba(15,23,42,0.18)]
-          backdrop-blur-md
+        style="
+          min-width:250px;
+          padding:6px;
+          font-family:Arial,sans-serif;
         "
       >
         <div
-          className="
-            flex
-            items-center
-            gap-3
+          style="
+            font-size:10px;
+            color:#64748b;
+            font-weight:800;
+            letter-spacing:1px;
           "
         >
-          {/* LIVE DOT */}
-
-          <span
-            className="
-              relative
-              flex
-              h-4
-              w-4
-              items-center
-              justify-center
-            "
-          >
-            <span
-              className="
-                absolute
-                inline-flex
-                h-full
-                w-full
-                animate-ping
-                rounded-full
-                bg-emerald-400
-                opacity-40
-              "
-            />
-
-            <span
-              className="
-                relative
-                inline-flex
-                h-3
-                w-3
-                rounded-full
-                bg-emerald-500
-              "
-            />
-          </span>
-
-          <div>
-            <p
-              className="
-                text-sm
-                font-extrabold
-                text-slate-900
-              "
-            >
-              {liveBusCount}{" "}
-              {liveBusCount === 1
-                ? "Bus Live"
-                : "Buses Live"}
-            </p>
-
-            <p
-              className="
-                mt-0.5
-                text-xs
-                font-medium
-                text-slate-500
-              "
-            >
-              Real-time GPS tracking
-            </p>
-          </div>
+          AJU SMART BUS
         </div>
-      </div>
 
-      {/* ========================================================
-          MAP LABEL
-          ======================================================== */}
-
-      <div
-        className="
-          pointer-events-none
-          absolute
-          right-4
-          bottom-4
-          z-20
-          rounded-full
-          border
-          border-white/70
-          bg-white/90
-          px-3
-          py-1.5
-          text-[11px]
-          font-bold
-          text-slate-600
-          shadow-sm
-          backdrop-blur-md
-        "
-      >
-        Google Maps • Live
-      </div>
-
-      {/* ========================================================
-          NO LIVE BUS
-          ======================================================== */}
-
-      {liveBusCount === 0 && (
         <div
-          className="
-            pointer-events-none
-            absolute
-            inset-0
-            z-20
-            flex
-            items-center
-            justify-center
+          style="
+            margin-top:5px;
+            font-size:20px;
+            color:#005BAC;
+            font-weight:800;
+          "
+        >
+          🚌 ${escapeHtml(
+            getBusNumber(bus)
+          )}
+        </div>
+
+        <div
+          style="
+            margin-top:12px;
+            display:grid;
+            gap:8px;
           "
         >
           <div
-            className="
-              rounded-2xl
-              border
-              border-white/70
-              bg-white/95
-              px-7
-              py-6
-              text-center
-              shadow-[0_12px_35px_rgba(15,23,42,0.15)]
-              backdrop-blur-md
+            style="
+              border-radius:10px;
+              padding:9px;
+              background:#f8fafc;
             "
           >
             <div
-              className="
-                mb-3
-                text-4xl
+              style="
+                color:#94a3b8;
+                font-size:10px;
+                font-weight:700;
               "
             >
-              🚌
+              DRIVER
             </div>
 
-            <p
-              className="
-                text-sm
-                font-extrabold
-                text-slate-900
+            <div
+              style="
+                margin-top:3px;
+                color:#0f172a;
+                font-size:13px;
+                font-weight:700;
               "
             >
-              No Live Bus
-            </p>
+              ${escapeHtml(
+                bus.driverName ??
+                  "Not assigned"
+              )}
+            </div>
+          </div>
 
-            <p
-              className="
-                mt-1
-                text-xs
-                font-medium
-                text-slate-500
+          <div
+            style="
+              border-radius:10px;
+              padding:9px;
+              background:#f8fafc;
+            "
+          >
+            <div
+              style="
+                color:#94a3b8;
+                font-size:10px;
+                font-weight:700;
               "
             >
-              Start GPS tracking from
-              the driver dashboard.
-            </p>
+              ROUTE
+            </div>
+
+            <div
+              style="
+                margin-top:3px;
+                color:#0f172a;
+                font-size:13px;
+                font-weight:700;
+              "
+            >
+              ${escapeHtml(
+                bus.routeName ??
+                  "Not assigned"
+              )}
+            </div>
+          </div>
+
+          <div
+            style="
+              border-radius:10px;
+              padding:9px;
+              background:#f0fdf4;
+            "
+          >
+            <div
+              style="
+                color:#16a34a;
+                font-size:10px;
+                font-weight:700;
+              "
+            >
+              LAST GPS UPDATE
+            </div>
+
+            <div
+              style="
+                margin-top:3px;
+                color:#15803d;
+                font-size:13px;
+                font-weight:800;
+              "
+            >
+              ${updated}
+            </div>
+          </div>
+
+          <div
+            style="
+              border-radius:10px;
+              padding:9px;
+              background:#eff6ff;
+            "
+          >
+            <div
+              style="
+                color:#2563eb;
+                font-size:10px;
+                font-weight:700;
+              "
+            >
+              LIVE LOCATION
+            </div>
+
+            <div
+              style="
+                margin-top:3px;
+                color:#1e3a8a;
+                font-size:12px;
+                font-weight:700;
+              "
+            >
+              ${bus.latitude.toFixed(
+                6
+              )},
+              ${bus.longitude.toFixed(
+                6
+              )}
+            </div>
           </div>
         </div>
-      )}
+      </div>
+    `;
+  }
+
+  // ============================================================
+  // UPDATE BUS MARKERS
+  // ============================================================
+
+  useEffect(() => {
+    const map =
+      mapRef.current;
+
+    const AdvancedMarkerElement =
+      markerClassRef.current;
+
+    const InfoWindowClass =
+      infoWindowClassRef.current;
+
+    if (
+      !map ||
+      !AdvancedMarkerElement ||
+      !InfoWindowClass
+    ) {
+      return;
+    }
+
+    const currentBusIds =
+      new Set(
+        buses.map(
+          (bus) => bus.id
+        )
+      );
+
+    // ----------------------------------------------------------
+    // REMOVE MARKERS NO LONGER LIVE
+    // ----------------------------------------------------------
+
+    Object.keys(
+      markersRef.current
+    ).forEach((busId) => {
+      if (
+        !currentBusIds.has(
+          busId
+        )
+      ) {
+        markersRef.current[
+          busId
+        ].map = null;
+
+        delete markersRef.current[
+          busId
+        ];
+
+        delete infoWindowsRef.current[
+          busId
+        ];
+
+        delete lastPositionsRef.current[
+          busId
+        ];
+
+        if (
+          animationFramesRef
+            .current[busId]
+        ) {
+          cancelAnimationFrame(
+            animationFramesRef
+              .current[busId]
+          );
+
+          delete animationFramesRef
+            .current[busId];
+        }
+      }
+    });
+
+    // ----------------------------------------------------------
+    // CREATE / UPDATE MARKERS
+    // ----------------------------------------------------------
+
+    buses.forEach((bus) => {
+      const target = {
+        lat: Number(
+          bus.latitude
+        ),
+        lng: Number(
+          bus.longitude
+        ),
+      };
+
+      if (
+        !Number.isFinite(
+          target.lat
+        ) ||
+        !Number.isFinite(
+          target.lng
+        )
+      ) {
+        return;
+      }
+
+      const existingMarker =
+        markersRef.current[
+          bus.id
+        ];
+
+      // --------------------------------------------------------
+      // NEW MARKER
+      // --------------------------------------------------------
+
+      if (!existingMarker) {
+        const element =
+          createBusMarkerElement(
+            bus
+          );
+
+        const marker =
+          new AdvancedMarkerElement({
+            map,
+
+            position:
+              target,
+
+            title:
+              `${getBusNumber(
+                bus
+              )} - LIVE`,
+
+            content:
+              element,
+          });
+
+        const infoWindow =
+          new InfoWindowClass({
+            content:
+              createInfoContent(
+                bus
+              ),
+          });
+
+        marker.addListener(
+          "click",
+          () => {
+            infoWindow.setContent(
+              createInfoContent(
+                bus
+              )
+            );
+
+            infoWindow.open({
+              map,
+              anchor:
+                marker,
+            });
+          }
+        );
+
+        markersRef.current[
+          bus.id
+        ] = marker;
+
+        infoWindowsRef.current[
+          bus.id
+        ] = infoWindow;
+
+        lastPositionsRef.current[
+          bus.id
+        ] = target;
+
+        return;
+      }
+
+      // --------------------------------------------------------
+      // SMOOTH MOVEMENT
+      // --------------------------------------------------------
+
+      const previous =
+        lastPositionsRef.current[
+          bus.id
+        ] ?? target;
+
+      const startLat =
+        Number(
+          previous.lat
+        );
+
+      const startLng =
+        Number(
+          previous.lng
+        );
+
+      if (
+        animationFramesRef
+          .current[bus.id]
+      ) {
+        cancelAnimationFrame(
+          animationFramesRef
+            .current[bus.id]
+        );
+      }
+
+      const animationDuration =
+        900;
+
+      const startTime =
+        performance.now();
+
+      function animate(
+        currentTime: number
+      ) {
+        const elapsed =
+          currentTime -
+          startTime;
+
+        const progress =
+          Math.min(
+            elapsed /
+              animationDuration,
+            1
+          );
+
+        const eased =
+          progress *
+          progress *
+          (3 -
+            2 *
+              progress);
+
+        existingMarker.position = {
+          lat:
+            startLat +
+            (target.lat -
+              startLat) *
+              eased,
+
+          lng:
+            startLng +
+            (target.lng -
+              startLng) *
+              eased,
+        };
+
+        if (
+          progress < 1
+        ) {
+          animationFramesRef
+            .current[
+              bus.id
+            ] =
+              requestAnimationFrame(
+                animate
+              );
+        } else {
+          lastPositionsRef
+            .current[
+              bus.id
+            ] =
+              target;
+
+          delete animationFramesRef
+            .current[
+              bus.id
+            ];
+        }
+      }
+
+      animationFramesRef
+        .current[
+          bus.id
+        ] =
+        requestAnimationFrame(
+          animate
+        );
+
+      existingMarker.title =
+        `${getBusNumber(
+          bus
+        )} - LIVE`;
+
+      const infoWindow =
+        infoWindowsRef.current[
+          bus.id
+        ];
+
+      if (infoWindow) {
+        infoWindow.setContent(
+          createInfoContent(
+            bus
+          )
+        );
+      }
+    });
+
+    // ----------------------------------------------------------
+    // FOLLOW SELECTED BUS
+    // ----------------------------------------------------------
+
+    if (
+      followBusId
+    ) {
+      const followed =
+        buses.find(
+          (bus) =>
+            bus.id ===
+            followBusId
+        );
+
+      if (followed) {
+        map.panTo({
+          lat:
+            followed.latitude,
+          lng:
+            followed.longitude,
+        });
+      }
+    }
+
+    // ----------------------------------------------------------
+    // CENTER ON FIRST LIVE BUS
+    // ----------------------------------------------------------
+
+    if (
+      buses.length > 0 &&
+      !centeredRef.current &&
+      !followBusId
+    ) {
+      const firstBus =
+        buses[0];
+
+      map.panTo({
+        lat:
+          firstBus.latitude,
+        lng:
+          firstBus.longitude,
+      });
+
+      map.setZoom(16);
+
+      centeredRef.current =
+        true;
+    }
+  }, [
+    buses,
+    followBusId,
+  ]);
+
+  // ============================================================
+  // RESET CENTER
+  // ============================================================
+
+  useEffect(() => {
+    if (
+      buses.length === 0
+    ) {
+      centeredRef.current =
+        false;
+    }
+  }, [buses.length]);
+
+  // ============================================================
+  // UI
+  // ============================================================
+
+  const mapHeightStyle: CSSProperties = {
+    minHeight: "500px",
+  };
+
+  return (
+    <div
+      className={`relative w-full overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-xl ${heightClassName}`}
+      style={mapHeightStyle}
+    >
+      <div
+        ref={mapContainerRef}
+        className="absolute inset-0 h-full w-full"
+      />
+
+      {/* No Live Bus overlay intentionally removed. */}
+
+      <div className="pointer-events-none absolute bottom-4 left-4 z-10">
+        <div className="rounded-2xl border border-white/60 bg-white/95 px-4 py-3 shadow-xl backdrop-blur-md">
+          <div className="flex items-center gap-3">
+            <span
+              className={`h-3 w-3 rounded-full ${
+                buses.length > 0
+                  ? "animate-pulse bg-green-500"
+                  : "bg-slate-300"
+              }`}
+            />
+
+            <div>
+              <p className="text-sm font-black text-slate-800">
+                {buses.length}{" "}
+                {buses.length === 1
+                  ? "Bus"
+                  : "Buses"}{" "}
+                Live
+              </p>
+
+              <p className="text-xs text-slate-500">
+                Real-time GPS tracking
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
+}
+
+// ============================================================
+// HELPERS
+// ============================================================
+
+function getBusNumber(
+  bus: LiveMapBus
+) {
+  return (
+    bus.bus_number ??
+    bus.busNumber ??
+    `BUS ${bus.id.slice(0, 8)}`
+  );
+}
+
+function getUpdatedAt(
+  bus: LiveMapBus
+) {
+  return (
+    bus.updated_at ??
+    bus.updatedAt ??
+    null
+  );
+}
+
+function escapeHtml(
+  value: string
+) {
+  return value
+    .replaceAll(
+      "&",
+      "&amp;"
+    )
+    .replaceAll(
+      "<",
+      "&lt;"
+    )
+    .replaceAll(
+      ">",
+      "&gt;"
+    )
+    .replaceAll(
+      '"',
+      "&quot;"
+    )
+    .replaceAll(
+      "'",
+      "&#039;"
+    );
 }
