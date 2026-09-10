@@ -1,603 +1,578 @@
 "use client";
 
-import { useState } from "react";
+import {
+  FormEvent,
+  useCallback,
+  useEffect,
+  useState,
+} from "react";
+import { supabase } from "@/lib/supabase";
 
-interface Route {
-  id: number;
-  name: string;
-  start: string;
-  destination: string;
-  stops: number;
-  bus: string;
-  status: "Active" | "Inactive";
-}
+type RouteItem = {
+  id: string;
+  route_name: string;
+  start_point: string;
+  end_point: string;
+};
 
-const emptyForm = {
-  name: "",
-  start: "",
-  destination: "",
-  stops: "",
-  bus: "",
+type RouteForm = {
+  route_name: string;
+  start_point: string;
+  end_point: string;
+};
+
+const emptyForm: RouteForm = {
+  route_name: "",
+  start_point: "",
+  end_point: "",
 };
 
 export default function RoutesPage() {
-  const [routes, setRoutes] = useState<Route[]>([
-    {
-      id: 1,
-      name: "AJU Route",
-      start: "Adityapur",
-      destination: "ARKA JAIN University",
-      stops: 8,
-      bus: "AJU Bus 01",
-      status: "Active",
-    },
-  ]);
+  const [routes, setRoutes] = useState<RouteItem[]>(
+    []
+  );
 
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [form, setForm] = useState(emptyForm);
+  const [form, setForm] =
+    useState<RouteForm>(emptyForm);
+
+  const [editingId, setEditingId] = useState<
+    string | null
+  >(null);
+
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
 
-  function openAddForm() {
-    setEditingId(null);
-    setForm(emptyForm);
+  // =====================================================
+  // LOAD ROUTES
+  // =====================================================
+
+  const loadRoutes = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError("");
+
+      const {
+        data,
+        error: loadError,
+      } = await supabase
+        .from("routes")
+        .select(
+          "id,route_name,start_point,end_point"
+        )
+        .order("route_name", {
+          ascending: true,
+        });
+
+      if (loadError) {
+        console.error(
+          "Route loading error:",
+          loadError
+        );
+
+        throw new Error(
+          loadError.message ||
+            "Unable to load routes."
+        );
+      }
+
+      setRoutes((data ?? []) as RouteItem[]);
+    } catch (err) {
+      console.error(
+        "Routes page error:",
+        err
+      );
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to load routes."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // =====================================================
+  // INITIAL LOAD + REALTIME
+  // =====================================================
+
+  useEffect(() => {
+    loadRoutes();
+
+    const channel = supabase
+      .channel("admin-routes")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "routes",
+        },
+        () => {
+          loadRoutes();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [loadRoutes]);
+
+  // =====================================================
+  // ADD / UPDATE
+  // =====================================================
+
+  async function handleSubmit(
+    e: FormEvent<HTMLFormElement>
+  ) {
+    e.preventDefault();
+
     setError("");
-    setShowForm(true);
+    setSuccess("");
+
+    if (!form.route_name.trim()) {
+      setError("Please enter route name.");
+      return;
+    }
+
+    if (!form.start_point.trim()) {
+      setError(
+        "Please enter starting point."
+      );
+      return;
+    }
+
+    if (!form.end_point.trim()) {
+      setError(
+        "Please enter destination."
+      );
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const routeData = {
+        route_name:
+          form.route_name.trim(),
+
+        start_point:
+          form.start_point.trim(),
+
+        end_point:
+          form.end_point.trim(),
+      };
+
+      if (editingId) {
+        const {
+          error: updateError,
+        } = await supabase
+          .from("routes")
+          .update(routeData)
+          .eq("id", editingId);
+
+        if (updateError) {
+          throw new Error(
+            updateError.message
+          );
+        }
+
+        setSuccess(
+          "Route updated successfully."
+        );
+      } else {
+        const {
+          error: insertError,
+        } = await supabase
+          .from("routes")
+          .insert(routeData);
+
+        if (insertError) {
+          throw new Error(
+            insertError.message
+          );
+        }
+
+        setSuccess(
+          "Route added successfully."
+        );
+      }
+
+      setForm(emptyForm);
+      setEditingId(null);
+
+      await loadRoutes();
+    } catch (err) {
+      console.error(
+        "Route save error:",
+        err
+      );
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to save route."
+      );
+    } finally {
+      setSaving(false);
+    }
   }
 
-  function openEditForm(route: Route) {
+  // =====================================================
+  // EDIT
+  // =====================================================
+
+  function handleEdit(route: RouteItem) {
     setEditingId(route.id);
 
     setForm({
-      name: route.name,
-      start: route.start,
-      destination: route.destination,
-      stops: String(route.stops),
-      bus: route.bus,
+      route_name: route.route_name,
+      start_point: route.start_point,
+      end_point: route.end_point,
     });
 
     setError("");
-    setShowForm(true);
+    setSuccess("");
   }
 
-  function closeForm() {
-    setShowForm(false);
-    setEditingId(null);
-    setForm(emptyForm);
-    setError("");
-  }
+  // =====================================================
+  // DELETE
+  // =====================================================
 
-  function saveRoute() {
-    if (
-      !form.name.trim() ||
-      !form.start.trim() ||
-      !form.destination.trim() ||
-      !form.stops.trim() ||
-      !form.bus.trim()
-    ) {
-      setError("Please fill all fields before saving.");
-      return;
-    }
-
-    if (editingId !== null) {
-      setRoutes((prev) =>
-        prev.map((route) =>
-          route.id === editingId
-            ? {
-                ...route,
-                name: form.name,
-                start: form.start,
-                destination: form.destination,
-                stops: Number(form.stops),
-                bus: form.bus,
-              }
-            : route
-        )
-      );
-
-      closeForm();
-      return;
-    }
-
-    const newRoute: Route = {
-      id: Date.now(),
-      name: form.name,
-      start: form.start,
-      destination: form.destination,
-      stops: Number(form.stops),
-      bus: form.bus,
-      status: "Active",
-    };
-
-    setRoutes((prev) => [...prev, newRoute]);
-    closeForm();
-  }
-
-  function deleteRoute(id: number) {
+  async function handleDelete(id: string) {
     const confirmed = window.confirm(
       "Are you sure you want to delete this route?"
     );
 
     if (!confirmed) return;
 
-    setRoutes((prev) =>
-      prev.filter((route) => route.id !== id)
-    );
+    try {
+      setError("");
+      setSuccess("");
+
+      const {
+        error: deleteError,
+      } = await supabase
+        .from("routes")
+        .delete()
+        .eq("id", id);
+
+      if (deleteError) {
+        throw new Error(
+          deleteError.message
+        );
+      }
+
+      setSuccess(
+        "Route deleted successfully."
+      );
+
+      await loadRoutes();
+    } catch (err) {
+      console.error(
+        "Route delete error:",
+        err
+      );
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to delete route."
+      );
+    }
   }
 
-  function toggleStatus(id: number) {
-    setRoutes((prev) =>
-      prev.map((route) =>
-        route.id === id
-          ? {
-              ...route,
-              status:
-                route.status === "Active"
-                  ? "Inactive"
-                  : "Active",
-            }
-          : route
-      )
-    );
+  // =====================================================
+  // CANCEL EDIT
+  // =====================================================
+
+  function cancelEdit() {
+    setEditingId(null);
+    setForm(emptyForm);
+    setError("");
+    setSuccess("");
   }
+
+  // =====================================================
+  // UI
+  // =====================================================
 
   return (
-    <main className="min-h-screen bg-slate-100 p-6 md:p-8">
+    <main className="min-h-screen bg-slate-100 p-6 lg:p-8">
 
       {/* HEADER */}
-      <div className="mb-8 flex flex-col justify-between gap-4 md:flex-row md:items-center">
-        <div>
-          <h1 className="text-4xl font-bold text-[#005BAC]">
-            Route Management
-          </h1>
+      <div className="mb-8">
+        <p className="text-xs font-bold uppercase tracking-[0.2em] text-blue-600">
+          AJU Smart Bus
+        </p>
 
-          <p className="mt-2 text-lg text-slate-600">
-            Manage university bus routes and stops.
-          </p>
+        <h1 className="mt-2 text-4xl font-black text-slate-900">
+          Routes
+        </h1>
+
+        <p className="mt-2 text-slate-500">
+          Create and manage university bus routes.
+        </p>
+      </div>
+
+      {/* ALERTS */}
+
+      {error && (
+        <div className="mb-5 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">
+          ⚠️ {error}
+        </div>
+      )}
+
+      {success && (
+        <div className="mb-5 rounded-xl border border-green-200 bg-green-50 p-4 text-sm font-semibold text-green-700">
+          ✅ {success}
+        </div>
+      )}
+
+      {/* FORM */}
+
+      <section className="mb-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+
+        <div className="mb-5 flex items-center justify-between">
+
+          <div>
+            <h2 className="text-xl font-black text-slate-900">
+              {editingId
+                ? "Edit Route"
+                : "Add Route"}
+            </h2>
+
+            <p className="mt-1 text-sm text-slate-500">
+              Enter route information.
+            </p>
+          </div>
+
+          {editingId && (
+            <button
+              type="button"
+              onClick={cancelEdit}
+              className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50"
+            >
+              Cancel
+            </button>
+          )}
+
         </div>
 
-        <button
-          onClick={openAddForm}
-          className="rounded-xl bg-[#005BAC] px-6 py-3 font-semibold text-white shadow-md transition hover:bg-blue-700"
+        <form
+          onSubmit={handleSubmit}
+          className="grid grid-cols-1 gap-4 md:grid-cols-3"
         >
-          + Add New Route
-        </button>
-      </div>
 
-      {/* STATISTICS */}
-      <div className="mb-8 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
-
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <p className="text-sm text-slate-500">
-            Total Routes
-          </p>
-
-          <h2 className="mt-2 text-3xl font-bold text-[#005BAC]">
-            {routes.length}
-          </h2>
-
-          <p className="mt-1 text-sm text-slate-400">
-            Registered routes
-          </p>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <p className="text-sm text-slate-500">
-            Active Routes
-          </p>
-
-          <h2 className="mt-2 text-3xl font-bold text-green-600">
-            {
-              routes.filter(
-                (route) => route.status === "Active"
-              ).length
+          <input
+            type="text"
+            placeholder="Route Name"
+            value={form.route_name}
+            onChange={(e) =>
+              setForm({
+                ...form,
+                route_name:
+                  e.target.value,
+              })
             }
-          </h2>
+            className="rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-blue-500"
+          />
 
-          <p className="mt-1 text-sm text-slate-400">
-            Currently operating
-          </p>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <p className="text-sm text-slate-500">
-            Total Stops
-          </p>
-
-          <h2 className="mt-2 text-3xl font-bold text-blue-600">
-            {routes.reduce(
-              (total, route) => total + route.stops,
-              0
-            )}
-          </h2>
-
-          <p className="mt-1 text-sm text-slate-400">
-            Across all routes
-          </p>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <p className="text-sm text-slate-500">
-            Assigned Buses
-          </p>
-
-          <h2 className="mt-2 text-3xl font-bold text-purple-600">
-            {
-              routes.filter(
-                (route) => route.bus.trim() !== ""
-              ).length
+          <input
+            type="text"
+            placeholder="Starting Point"
+            value={form.start_point}
+            onChange={(e) =>
+              setForm({
+                ...form,
+                start_point:
+                  e.target.value,
+              })
             }
-          </h2>
+            className="rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-blue-500"
+          />
 
-          <p className="mt-1 text-sm text-slate-400">
-            Buses assigned
-          </p>
+          <input
+            type="text"
+            placeholder="Destination"
+            value={form.end_point}
+            onChange={(e) =>
+              setForm({
+                ...form,
+                end_point:
+                  e.target.value,
+              })
+            }
+            className="rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-blue-500"
+          />
+
+          <button
+            type="submit"
+            disabled={saving}
+            className="rounded-xl bg-[#005BAC] px-5 py-3 font-bold text-white hover:bg-blue-700 disabled:opacity-50 md:col-span-3"
+          >
+            {saving
+              ? "Saving..."
+              : editingId
+                ? "Update Route"
+                : "Add Route"}
+          </button>
+
+        </form>
+
+      </section>
+
+      {/* ROUTE LIST */}
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+
+        <div className="flex items-center justify-between">
+
+          <div>
+            <h2 className="text-xl font-black text-slate-900">
+              Registered Routes
+            </h2>
+
+            <p className="mt-1 text-sm text-slate-500">
+              {routes.length} route
+              {routes.length === 1 ? "" : "s"} found
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={loadRoutes}
+            className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold hover:bg-slate-50"
+          >
+            ↻ Refresh
+          </button>
+
         </div>
 
-      </div>
+        <div className="mt-6 overflow-x-auto">
 
-      {/* ROUTES TABLE */}
-      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          {loading ? (
+            <div className="p-10 text-center text-slate-500">
+              Loading routes...
+            </div>
+          ) : routes.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-10 text-center">
 
-        <div className="border-b border-slate-200 px-6 py-5">
-          <h2 className="text-2xl font-bold text-[#005BAC]">
-            All Routes
-          </h2>
+              <div className="text-4xl">
+                🗺️
+              </div>
 
-          <p className="mt-1 text-slate-500">
-            View and manage university bus routes.
-          </p>
-        </div>
+              <h3 className="mt-3 font-bold text-slate-700">
+                No routes found
+              </h3>
 
-        <div className="overflow-x-auto">
+              <p className="mt-1 text-sm text-slate-500">
+                Add your first route above.
+              </p>
 
-          <table className="w-full min-w-[1000px]">
+            </div>
+          ) : (
+            <table className="w-full min-w-[700px]">
 
-            <thead className="bg-slate-50">
+              <thead>
+                <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wider text-slate-400">
 
-              <tr className="text-left text-sm text-slate-500">
+                  <th className="px-4 py-4">
+                    Route
+                  </th>
 
-                <th className="px-6 py-4">
-                  Route
-                </th>
+                  <th className="px-4 py-4">
+                    Start
+                  </th>
 
-                <th className="px-6 py-4">
-                  Start
-                </th>
+                  <th className="px-4 py-4">
+                    Destination
+                  </th>
 
-                <th className="px-6 py-4">
-                  Destination
-                </th>
-
-                <th className="px-6 py-4">
-                  Stops
-                </th>
-
-                <th className="px-6 py-4">
-                  Bus
-                </th>
-
-                <th className="px-6 py-4">
-                  Status
-                </th>
-
-                <th className="px-6 py-4">
-                  Actions
-                </th>
-
-              </tr>
-
-            </thead>
-
-            <tbody>
-
-              {routes.map((route) => (
-
-                <tr
-                  key={route.id}
-                  className="border-t border-slate-100 transition hover:bg-slate-50"
-                >
-
-                  {/* ROUTE */}
-
-                  <td className="px-6 py-5">
-
-                    <div className="flex items-center gap-4">
-
-                      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-100 text-2xl">
-                        🗺️
-                      </div>
-
-                      <div>
-                        <p className="font-bold text-slate-800">
-                          {route.name}
-                        </p>
-
-                        <p className="text-sm text-slate-400">
-                          Route #{route.id}
-                        </p>
-                      </div>
-
-                    </div>
-
-                  </td>
-
-                  {/* START */}
-
-                  <td className="px-6 py-5 text-slate-700">
-                    {route.start}
-                  </td>
-
-                  {/* DESTINATION */}
-
-                  <td className="px-6 py-5 font-medium text-[#005BAC]">
-                    {route.destination}
-                  </td>
-
-                  {/* STOPS */}
-
-                  <td className="px-6 py-5">
-
-                    <span className="rounded-lg bg-blue-50 px-3 py-2 font-semibold text-blue-600">
-                      {route.stops} Stops
-                    </span>
-
-                  </td>
-
-                  {/* BUS */}
-
-                  <td className="px-6 py-5 font-medium text-slate-700">
-                    🚌 {route.bus}
-                  </td>
-
-                  {/* STATUS */}
-
-                  <td className="px-6 py-5">
-
-                    <button
-                      onClick={() =>
-                        toggleStatus(route.id)
-                      }
-                      className={`rounded-full px-4 py-2 text-sm font-semibold ${
-                        route.status === "Active"
-                          ? "bg-green-100 text-green-700"
-                          : "bg-orange-100 text-orange-700"
-                      }`}
-                    >
-                      ● {route.status}
-                    </button>
-
-                  </td>
-
-                  {/* ACTIONS */}
-
-                  <td className="px-6 py-5">
-
-                    <div className="flex items-center gap-2">
-
-                      <button
-                        onClick={() =>
-                          openEditForm(route)
-                        }
-                        className="rounded-lg bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-600 transition hover:bg-blue-100"
-                      >
-                        Edit
-                      </button>
-
-                      <button
-                        onClick={() =>
-                          deleteRoute(route.id)
-                        }
-                        className="rounded-lg bg-red-50 px-4 py-2 text-sm font-semibold text-red-600 transition hover:bg-red-100"
-                      >
-                        Delete
-                      </button>
-
-                    </div>
-
-                  </td>
+                  <th className="px-4 py-4 text-right">
+                    Actions
+                  </th>
 
                 </tr>
+              </thead>
 
-              ))}
+              <tbody>
 
-            </tbody>
+                {routes.map((route) => (
+                  <tr
+                    key={route.id}
+                    className="border-b border-slate-100 hover:bg-slate-50"
+                  >
 
-          </table>
+                    <td className="px-4 py-4">
 
-        </div>
+                      <div className="flex items-center gap-3">
 
-        {routes.length === 0 && (
-          <div className="px-6 py-12 text-center text-slate-500">
-            No routes registered yet.
-          </div>
-        )}
+                        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-green-100">
+                          🗺️
+                        </div>
 
-      </div>
+                        <span className="font-bold text-slate-800">
+                          {route.route_name}
+                        </span>
 
-      {/* ADD / EDIT MODAL */}
+                      </div>
 
-      {showForm && (
+                    </td>
 
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4">
+                    <td className="px-4 py-4 text-sm text-slate-600">
+                      {route.start_point}
+                    </td>
 
-          <div className="w-full max-w-lg rounded-2xl bg-white p-7 shadow-2xl">
+                    <td className="px-4 py-4 text-sm text-slate-600">
+                      {route.end_point}
+                    </td>
 
-            <div className="mb-6 flex items-start justify-between">
+                    <td className="px-4 py-4">
 
-              <div>
+                      <div className="flex justify-end gap-2">
 
-                <h2 className="text-2xl font-bold text-[#005BAC]">
-                  {editingId !== null
-                    ? "Edit Route"
-                    : "Add New Route"}
-                </h2>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleEdit(route)
+                          }
+                          className="rounded-lg bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100"
+                        >
+                          Edit
+                        </button>
 
-                <p className="mt-1 text-sm text-slate-500">
-                  {editingId !== null
-                    ? "Update route information."
-                    : "Enter route information below."}
-                </p>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleDelete(
+                              route.id
+                            )
+                          }
+                          className="rounded-lg bg-red-50 px-3 py-2 text-xs font-bold text-red-600 hover:bg-red-100"
+                        >
+                          Delete
+                        </button>
 
-              </div>
+                      </div>
 
-              <button
-                onClick={closeForm}
-                className="text-2xl font-semibold text-slate-400 hover:text-slate-700"
-              >
-                ×
-              </button>
+                    </td>
 
-            </div>
+                  </tr>
+                ))}
 
-            {error && (
-              <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-600">
-                {error}
-              </div>
-            )}
+              </tbody>
 
-            <div className="space-y-4">
-
-              {/* ROUTE NAME */}
-
-              <div>
-                <label className="mb-1 block text-sm font-semibold text-slate-700">
-                  Route Name
-                </label>
-
-                <input
-                  type="text"
-                  placeholder="e.g. AJU Route"
-                  value={form.name}
-                  onChange={(e) => {
-                    setForm({
-                      ...form,
-                      name: e.target.value,
-                    });
-                    setError("");
-                  }}
-                  className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-[#005BAC] focus:ring-2 focus:ring-blue-100"
-                />
-              </div>
-
-              {/* START */}
-
-              <div>
-                <label className="mb-1 block text-sm font-semibold text-slate-700">
-                  Starting Point
-                </label>
-
-                <input
-                  type="text"
-                  placeholder="e.g. Adityapur"
-                  value={form.start}
-                  onChange={(e) => {
-                    setForm({
-                      ...form,
-                      start: e.target.value,
-                    });
-                    setError("");
-                  }}
-                  className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-[#005BAC] focus:ring-2 focus:ring-blue-100"
-                />
-              </div>
-
-              {/* DESTINATION */}
-
-              <div>
-                <label className="mb-1 block text-sm font-semibold text-slate-700">
-                  Destination
-                </label>
-
-                <input
-                  type="text"
-                  placeholder="e.g. ARKA JAIN University"
-                  value={form.destination}
-                  onChange={(e) => {
-                    setForm({
-                      ...form,
-                      destination: e.target.value,
-                    });
-                    setError("");
-                  }}
-                  className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-[#005BAC] focus:ring-2 focus:ring-blue-100"
-                />
-              </div>
-
-              {/* STOPS */}
-
-              <div>
-                <label className="mb-1 block text-sm font-semibold text-slate-700">
-                  Number of Stops
-                </label>
-
-                <input
-                  type="number"
-                  min="1"
-                  placeholder="e.g. 8"
-                  value={form.stops}
-                  onChange={(e) => {
-                    setForm({
-                      ...form,
-                      stops: e.target.value,
-                    });
-                    setError("");
-                  }}
-                  className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-[#005BAC] focus:ring-2 focus:ring-blue-100"
-                />
-              </div>
-
-              {/* BUS */}
-
-              <div>
-                <label className="mb-1 block text-sm font-semibold text-slate-700">
-                  Assigned Bus
-                </label>
-
-                <input
-                  type="text"
-                  placeholder="e.g. AJU Bus 01"
-                  value={form.bus}
-                  onChange={(e) => {
-                    setForm({
-                      ...form,
-                      bus: e.target.value,
-                    });
-                    setError("");
-                  }}
-                  className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-[#005BAC] focus:ring-2 focus:ring-blue-100"
-                />
-              </div>
-
-              {/* BUTTONS */}
-
-              <div className="flex gap-3 pt-2">
-
-                <button
-                  onClick={closeForm}
-                  className="w-1/3 rounded-xl border border-slate-300 px-5 py-3 font-semibold text-slate-600 hover:bg-slate-50"
-                >
-                  Cancel
-                </button>
-
-                <button
-                  onClick={saveRoute}
-                  className="w-2/3 rounded-xl bg-[#005BAC] px-5 py-3 font-semibold text-white shadow-md hover:bg-blue-700"
-                >
-                  {editingId !== null
-                    ? "Save Changes"
-                    : "Add Route"}
-                </button>
-
-              </div>
-
-            </div>
-
-          </div>
+            </table>
+          )}
 
         </div>
 
-      )}
+      </section>
 
     </main>
   );
